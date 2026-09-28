@@ -1,0 +1,3 @@
+[submodule "KSNetFix"]
+	path = KSNetFix
+	url = https://github.com/Joe13PL/KSNetFix.git
