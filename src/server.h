@@ -25,6 +25,7 @@ struct ServerSettings {
     int window = 2;             // 0 normal, 1 minimized, 2 hidden - never takes the focus
     int mute = 1;               // no sound (the game sees no sound device)
     int console = 1;            // server console window: live log + commands
+    int render = 0;             // 0 = draw only until the first menu (start-up needs it), 1 = always
 };
 
 struct ServerGameAddrs {

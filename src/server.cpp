@@ -153,6 +153,7 @@ bool SelectListItem(void* dlg, int id, int index, bool notify) {
 // minimized window, so "minimized" keeps the window hidden until the first menu is up.
 // ---------------------------------------------------------------------------
 enum : int { WIN_NORMAL = 0, WIN_MINIMIZED = 1, WIN_HIDDEN = 2 };
+enum : int { RENDER_STARTUP = 0, RENDER_ALWAYS = 1 };
 
 typedef ATOM(WINAPI* RegisterClassAFn)(const WNDCLASSA*);
 typedef BOOL(WINAPI* ShowWindowFn)(HWND, int);
@@ -162,6 +163,7 @@ RegisterClassAFn g_registerClassA;
 ShowWindowFn g_showWindow;
 WNDPROC g_gameWndProc;
 bool g_menuUp;              // first menu reached: a minimized window is safe from now on
+bool g_render = true;       // let the renderer draw (it draws only for its "foreground" window)
 
 LRESULT CALLBACK ServerWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     if (m == WM_ACTIVATE && LOWORD(w) == WA_INACTIVE) {
@@ -199,9 +201,12 @@ BOOL WINAPI HookSetForegroundWindow(HWND h) {
     return IsGameWindow(h) ? TRUE : SetForegroundWindow(h);
 }
 
+// The only caller is the renderer (0x88AE80): report the game window while drawing is wanted,
+// otherwise "no foreground window", which skips the whole frame.
 HWND WINAPI HookGetForegroundWindow() {
     HWND game = G<HWND>(X->mainWindow);
-    return game ? game : GetForegroundWindow();
+    if (!game) return GetForegroundWindow();
+    return g_render ? game : nullptr;
 }
 
 HRESULT WINAPI HookDirectSoundEnumerateA(void*, void*) { return 0; } // DS_OK, no devices
@@ -750,7 +755,9 @@ void RunCommands(ULONGLONG now) {
             st.cmdPaused = cmd == "pause";
             Say("automation %s", st.cmdPaused ? "paused" : "resumed");
         } else if (cmd == "show" || cmd == "hide") {
-            g_showWindow(wnd, cmd == "show" ? SW_SHOWNORMAL : SW_HIDE);
+            bool show = cmd == "show";
+            g_render = show || cfg.render == RENDER_ALWAYS; // a visible window is drawn
+            g_showWindow(wnd, show ? SW_SHOWNORMAL : SW_HIDE);
         } else if (cmd == "quit" || cmd == "exit") {
             Say("shutting down");
             PostMessageA(wnd, WM_CLOSE, 0, 0);
@@ -808,6 +815,10 @@ void Step() {
         if (cfg.window == WIN_MINIMIZED) {
             g_showWindow(G<HWND>(X->mainWindow), SW_SHOWMINNOACTIVE);
             Say("menu ready - window minimized");
+        }
+        if (cfg.render == RENDER_STARTUP) {
+            g_render = false;
+            Say("menu ready - rendering stopped (Render=startup; \"show\" draws again)");
         }
     }
     auto cb = Field(dlg, DLG_CALLBACK);
@@ -941,6 +952,9 @@ bool Server_LoadConfig(const char* ini) {
     sv.uniqueIdentity = Int("UniqueIdentity", sv.uniqueIdentity);
     sv.mute           = Int("Mute", sv.mute);
     sv.console        = Int("Console", sv.console);
+    wchar_t render[16] = L"startup";
+    Str(L"Render", render, 16);
+    sv.render = !_wcsicmp(render, L"always") ? RENDER_ALWAYS : RENDER_STARTUP;
     wchar_t win[16] = L"hidden";
     Str(L"Window", win, 16);
     sv.window = !_wcsicmp(win, L"normal") ? WIN_NORMAL : !_wcsicmp(win, L"hidden") ? WIN_HIDDEN : WIN_MINIMIZED;
