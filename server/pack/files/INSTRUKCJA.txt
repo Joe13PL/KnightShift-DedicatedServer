@@ -1,0 +1,63 @@
+KnightShift - serwer dedykowany RPG (paczka samodzielna)
+========================================================
+
+Ta paczka zawiera pliki gry z Twojej wlasnej, legalnej kopii KnightShift oraz nasz
+serwer (KSNetFix). Jest przeznaczona wylacznie do Twojego uzytku / Twojego serwera.
+NIE rozpowszechniaj jej - zawiera pliki gry.
+
+Do dzialania potrzebny jest LEGALNY klucz (numer seryjny) gry.
+
+
+URUCHOMIENIE (Windows)
+----------------------
+1. Rozpakuj folder w dowolne miejsce (np. C:\KnightShift-Server).
+2. Otworz ksnetfix.ini, znajdz sekcje [Server] i w linii:
+        CdKey=
+   wpisz swoj klucz gry (16 znakow, myslniki nieobowiazkowe), np. CdKey=XXXX-XXXX-XXXX-XXXX
+   (Jesli na tym komputerze gra byla juz aktywowana, mozesz zostawic pusto.)
+3. Uruchom start.bat.
+   Otworzy sie okno konsoli serwera. Serwer sam zaklada sesje RPG "KnightShift RPG Server".
+4. Zatrzymanie: wpisz w konsoli quit (albo Ctrl+C), albo uruchom stop.bat.
+
+Nie trzeba instalowac gry, nie trzeba Steama, nie trzeba uprawnien administratora.
+Skrypt kieruje gre do danych w tym folderze (klucz rejestru dla biezacego uzytkownika,
+usuwany przez stop.bat).
+
+
+KOMENDY W KONSOLI
+-----------------
+help                spis komend
+status              stan serwera i lista graczy
+start               start od razu, gdy wszyscy sa gotowi
+end                 zakoncz biezaca gre
+pause / resume      wstrzymaj / wznow automat
+show / hide         pokaz / ukryj okno gry
+quit                wylacz serwer
+
+
+USTAWIENIA (ksnetfix.ini, sekcja [Server])
+------------------------------------------
+SessionName=KnightShift RPG Server   nazwa sesji
+Level=                               poziom (pusto = pierwszy z listy)
+MinPlayers=1                         ilu graczy trzeba do startu
+StartDelay=20                        sekundy gotowosci przed startem
+DynamicConnect=1                     dolaczanie w trakcie gry
+Observer=1                           serwer zostaje obserwatorem po starcie
+AutoRestart=1                        nowa sesja po zakonczeniu gry
+CdKey=                               Twoj legalny klucz gry
+
+
+GRA PRZEZ INTERNET
+------------------
+Na razie serwer dziala w sieci lokalnej / przez VPN (Radmin, ZeroTier): u wszystkich
+w [Steam] ustaw Enabled=0. Gra przez Steam z serwera to nastepny krok (anonimowy serwer
+Steam - w przygotowaniu).
+
+
+PROBLEMY
+--------
+- W folderze pojawia sie ksnetfix.log - pierwsze linie musza konczyc sie slowem "ok",
+  a przy starcie pojawia sie "server: level ...".
+- "Nieprawidlowy numer seryjny" u gracza z tym samym kluczem co serwer: to normalne,
+  serwer ma wlasna tozsamosc (UniqueIdentity=1), gracz i tak dolaczy.
+- Brak liter/czcionek: to paczka bez plikow wideo/muzyki - do gry sieciowej niepotrzebnych.
