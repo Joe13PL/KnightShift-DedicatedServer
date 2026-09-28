@@ -23,8 +23,11 @@
 #include <windows.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <wchar.h>
+#include <deque>
+#include <string>
 
 #include "patch.h"
 #include "server.h"
@@ -53,13 +56,14 @@ struct Addrs {
     uint32_t installIdHi;                 // high dword of the identity decoded from the CD key
     uint32_t inputActivateFn;             // cdecl(int): acquire / release DirectInput keyboard + mouse
     uint32_t mainWindow;                  // HWND of the game window
+    uint32_t gameOverResult;              // int: button of the "game over" message box, -1 = none yet
 };
 
 const Addrs kEx1 = {
     0x00405FF0, 0x007575F0, 0x0041EC80, 0x0055F210, 0x0093988C, 0x00939824, 0x007B0B30,
     0x00F62384, 0x00F62388, 0x00900928, 0x00900948, 0x00F63414, 0x00F6341C, 0x00F632D8, 0x00F626DC,
     0x00F6279C, 0x00F627A0, 0x00F62768, 0x00F6276C, 0x00F6226C, 0x0097B378,
-    0x004B8CA0, 0x004B8D70, 0x00937268, 0x00937914, 0x007D8BD0, 0x009372B4,
+    0x004B8CA0, 0x004B8D70, 0x00937268, 0x00937914, 0x007D8BD0, 0x009372B4, 0x00939884,
 };
 
 const char kWindowClass[] = "EARTH2150_GAME"; // main game window
@@ -79,7 +83,8 @@ enum Ctrl : int {
     ID_LEVEL_LIST = 0x511, ID_DYNAMIC_CONNECT = 0x555, ID_START = 0xFF86, ID_LOBBY_BACK = 0xFF05,
 };
 enum : int { MSG_COMMAND = 0, MSG_SELECT = 0x11, MSG_EDIT_CHANGED = 0x300 };
-enum : uint32_t { LOBBY_STARTING = 0x400, SLOT_HUMAN = 3, PLAYER_OBSERVER = 0x730 };
+enum : uint32_t { LOBBY_STARTING = 0x400, SLOT_HUMAN = 3, PLAYER_OBSERVER = 0x730, PLAYER_GAME_OVER = 0x684 };
+enum : int { GAME_OVER_END = 6 };
 
 // Engine UI objects (vtable offsets / fields shared by all builds seen so far).
 enum : uint32_t {
@@ -274,6 +279,10 @@ struct State {
     bool inGame = false;
     ULONGLONG gameSince = 0;
     bool observerDone = false;
+    ULONGLONG gameOverSince = 0;
+    ULONGLONG emptySince = 0;    // no player connected to the running game since
+    bool forceStart = false;     // console "start"
+    bool cmdPaused = false;      // console "pause"
     uint32_t peers[8] = {};
     int games = 0;
     bool finished = false;       // AutoRestart=0 and a game ended
@@ -283,6 +292,75 @@ struct State {
 } st;
 
 void Delay(ULONGLONG now, DWORD ms) { st.nextAction = now + ms; }
+
+// ---------------------------------------------------------------------------
+// Console: the face of the server (live log + commands) while the game stays hidden.
+// Commands are queued by an input thread and run on the game's main thread in Step().
+// ---------------------------------------------------------------------------
+HANDLE g_conOut = INVALID_HANDLE_VALUE;
+CRITICAL_SECTION g_cmdLock;
+std::deque<std::string> g_cmds;
+
+void Say(const char* fmt, ...) {
+    char buf[600];
+    va_list ap;
+    va_start(ap, fmt);
+    _vsnprintf(buf, sizeof(buf) - 1, fmt, ap);
+    va_end(ap);
+    buf[sizeof(buf) - 1] = 0;
+    Log("server: %s", buf);
+    if (g_conOut != INVALID_HANDLE_VALUE) {
+        SYSTEMTIME t;
+        GetLocalTime(&t);
+        char line[640];
+        int n = _snprintf(line, sizeof(line) - 1, "[%02d:%02d:%02d] %s\r\n", t.wHour, t.wMinute, t.wSecond, buf);
+        if (n < 0) n = (int)sizeof(line) - 1;
+        DWORD w;
+        WriteFile(g_conOut, line, (DWORD)n, &w, nullptr);
+    }
+}
+
+DWORD WINAPI ConsoleInput(void*) {
+    HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
+    for (;;) {
+        char line[256];
+        DWORD n = 0;
+        if (!ReadConsoleA(in, line, sizeof(line) - 1, &n, nullptr)) {
+            Sleep(200);
+            continue;
+        }
+        line[n] = 0;
+        std::string cmd(line);
+        while (!cmd.empty() && (unsigned char)cmd.back() <= ' ') cmd.pop_back();
+        while (!cmd.empty() && (unsigned char)cmd.front() <= ' ') cmd.erase(0, 1);
+        if (cmd.empty()) continue;
+        EnterCriticalSection(&g_cmdLock);
+        g_cmds.push_back(cmd);
+        LeaveCriticalSection(&g_cmdLock);
+    }
+}
+
+// Ctrl+C, Ctrl+Break or closing the console: let the game leave the session and exit.
+BOOL WINAPI ConsoleCtrl(DWORD type) {
+    if (X) PostMessageA(G<HWND>(X->mainWindow), WM_CLOSE, 0, 0);
+    if (type == CTRL_CLOSE_EVENT || type == CTRL_LOGOFF_EVENT || type == CTRL_SHUTDOWN_EVENT) Sleep(4000);
+    return TRUE;
+}
+
+bool OpenConsole() {
+    if (!AllocConsole()) return false;
+    SetConsoleOutputCP(CP_UTF8);
+    wchar_t title[160];
+    _snwprintf(title, 159, L"KnightShift RPG Server - %s", cfg.sessionName);
+    title[159] = 0;
+    SetConsoleTitleW(title);
+    g_conOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    InitializeCriticalSection(&g_cmdLock);
+    SetConsoleCtrlHandler(ConsoleCtrl, TRUE);
+    HANDLE t = CreateThread(nullptr, 0, ConsoleInput, nullptr, 0, nullptr);
+    if (t) CloseHandle(t);
+    return true;
+}
 
 void NarrowName(const wchar_t* w, char* out, size_t n) {
     if (!w) w = L"";
@@ -298,11 +376,11 @@ void OnProfile(void* dlg, ULONGLONG now) {
     char n8[96];
     NarrowName(cfg.profileName, n8, sizeof(n8));
     if (!SetText(dlg, ID_PROFILE_NEW, cfg.profileName)) {
-        Log("server: could not enter the profile name");
+        Say("could not enter the profile name");
         Delay(now, 10000);
         return;
     }
-    Log("server: player profile \"%s\" (created if missing)", n8);
+    Say("player profile \"%s\" (created if missing)", n8);
     Command(dlg, ID_PROFILE_ENTER);
     Delay(now, 3000);
 }
@@ -315,7 +393,7 @@ void OnHeroDialog(void* dlg, ULONGLONG now) {
     int sel = (int)Field(dlg, HERO_DLG_SEL);
     if (count <= 0) {
         // "Create new character": default class, name "<class> <profile>", selected.
-        Log("server: no RPG hero in the profile - creating one");
+        Say("no RPG hero in the profile - creating one");
         Command(dlg, ID_HERO_CREATE);
         st.heroNamed = false;
         Delay(now, 1000);
@@ -334,14 +412,14 @@ void OnHeroDialog(void* dlg, ULONGLONG now) {
             ((MenuCbFn)(uintptr_t)Field(dlg, DLG_CALLBACK))(dlg, MSG_EDIT_CHANGED, ID_HERO_NAME, 0);
             char n8[96];
             NarrowName(cfg.heroName, n8, sizeof(n8));
-            Log("server: hero named \"%s\"", n8);
+            Say("hero named \"%s\"", n8);
         } else {
-            Log("server: could not rename the hero - keeping the default name");
+            Say("could not rename the hero - keeping the default name");
         }
         Delay(now, 1000);
         return;
     }
-    Log("server: accepting RPG hero %d of %d", sel + 1, count);
+    Say("accepting RPG hero %d of %d", sel + 1, count);
     Command(dlg, ID_HERO_ACCEPT);
     st.heroNamed = false;
     Delay(now, 3000);
@@ -356,20 +434,20 @@ void OnSerial(void* dlg, ULONGLONG now) {
         if (*p != L'-' && *p != L' ') key[n++] = *p;
     if (st.serialTried || n != 16) {
         if (!st.unknownLogged)
-            Log(st.serialTried ? "server: CD key rejected - check [Server] CdKey"
-                               : "server: the game asks for its CD key - set [Server] CdKey=XXXX-XXXX-XXXX-XXXX");
+            Say(st.serialTried ? "CD key rejected - check [Server] CdKey"
+                               : "the game asks for its CD key - set [Server] CdKey=XXXX-XXXX-XXXX-XXXX");
         st.unknownLogged = true;
         return;
     }
     for (int i = 0; i < 4; i++) {
         wchar_t part[5] = {key[i * 4], key[i * 4 + 1], key[i * 4 + 2], key[i * 4 + 3], 0};
         if (!SetText(dlg, ids[i], part)) {
-            Log("server: could not enter the CD key");
+            Say("could not enter the CD key");
             st.serialTried = true;
             return;
         }
     }
-    Log("server: entering the CD key from ksnetfix.ini");
+    Say("entering the CD key from ksnetfix.ini");
     st.serialTried = true;
     Command(dlg, ID_SERIAL_OK);
     Delay(now, 3000);
@@ -377,7 +455,7 @@ void OnSerial(void* dlg, ULONGLONG now) {
 
 void OnMainMenu(void* dlg, ULONGLONG now) {
     if (st.finished) return;
-    Log("server: main menu -> Multiplayer");
+    Say("main menu -> Multiplayer");
     Command(dlg, ID_MULTIPLAYER);
     Delay(now, 3000);
 }
@@ -397,13 +475,13 @@ void OnProvider(void* dlg, ULONGLONG now) {
         if (IsEqualGUID(*g, *ipx)) shown++;
     }
     if (index < 0 || !SelectListItem(dlg, ID_PROVIDER_LIST, index, false)) {
-        Log("server: TCP/IP provider not found (%d providers) - is DirectPlay installed?", n);
+        Say("TCP/IP provider not found (%d providers) - is DirectPlay installed?", n);
         Delay(now, 10000);
         return;
     }
     // Address "Listen for connection" (item 0, the default) hosts; anything else joins that address.
     if (void* addr = Control(dlg, ID_PROVIDER_ADDRESS)) ((SetSelFn)VFn(addr, VT_COMBO_SELECT))(addr, 0);
-    Log("server: connection type TCP/IP (Steam) -> Initialize");
+    Say("connection type TCP/IP (Steam) -> Initialize");
     Command(dlg, ID_PROVIDER_INIT);
     Delay(now, 3000);
 }
@@ -415,14 +493,14 @@ void OnSessions(void* dlg, ULONGLONG now) {
     for (wchar_t* p = name; *p; p++)
         if (*p == L':') *p = L' '; // "name:port" is parsed by the game
     if (!SetText(dlg, ID_SESSION_NAME, name)) {
-        Log("server: could not set the session name");
+        Say("could not set the session name");
         Delay(now, 10000);
         return;
     }
     if (Control(dlg, ID_SESSION_PASSWORD)) SetText(dlg, ID_SESSION_PASSWORD, cfg.password);
     char n8[192];
     NarrowName(name, n8, sizeof(n8));
-    Log("server: creating RPG session \"%s\"%s", n8, cfg.password[0] ? " (password)" : "");
+    Say("creating RPG session \"%s\"%s", n8, cfg.password[0] ? " (password)" : "");
     Command(dlg, ID_CREATE_RPG);
     Delay(now, 5000);
 }
@@ -457,19 +535,19 @@ void LogLobbyChanges() {
         uint32_t id = type == SLOT_HUMAN ? *reinterpret_cast<uint32_t*>(slots + i * 0x24 + 4) : 0;
         if (id == self) id = 0;
         if (id != st.slotDpnid[i]) {
-            if (st.slotDpnid[i]) Log("server: lobby slot %d: player %08X left", i + 1, st.slotDpnid[i]);
-            if (id) Log("server: lobby slot %d: player %08X joined", i + 1, id);
+            if (st.slotDpnid[i]) Say("lobby slot %d: player %08X left", i + 1, st.slotDpnid[i]);
+            if (id) Say("lobby slot %d: player %08X joined", i + 1, id);
             st.slotDpnid[i] = id;
         }
         bool r = id && (ready >> i & 1);
-        if (r != ((st.slotReady >> i & 1) != 0) && id) Log("server: lobby slot %d: %s", i + 1, r ? "ready" : "not ready");
+        if (r != ((st.slotReady >> i & 1) != 0) && id) Say("lobby slot %d: %s", i + 1, r ? "ready" : "not ready");
     }
     st.slotReady = ready;
 }
 
 void OnHostLobby(void* dlg, ULONGLONG now) {
     if (!G<uint32_t>(X->rpgFlag)) {
-        if (!st.rtsLogged) Log("server: RTS lobby - going back to create an RPG session");
+        if (!st.rtsLogged) Say("RTS lobby - going back to create an RPG session");
         st.rtsLogged = true;
         Command(dlg, ID_LOBBY_BACK);
         Delay(now, 3000);
@@ -483,10 +561,10 @@ void OnHostLobby(void* dlg, ULONGLONG now) {
         if (index < 0) {
             char want[256];
             NarrowName(cfg.level, want, sizeof(want));
-            Log("server: level \"%s\" not in the lobby list - using the current one", want);
+            Say("level \"%s\" not in the lobby list - using the current one", want);
         } else {
             SelectListItem(dlg, ID_LEVEL_LIST, index, true);
-            Log("server: level \"%s\"", name);
+            Say("level \"%s\"", name);
         }
         st.levelChosen = true;
         Delay(now, 1000);
@@ -501,7 +579,7 @@ void OnHostLobby(void* dlg, ULONGLONG now) {
             // Same as the lobby init: set the box, then let the handler broadcast it.
             ((SetCheckFn)(uintptr_t)X->setCheckFn)(c, cfg.dynamicConnect != 0);
             Command(dlg, ID_DYNAMIC_CONNECT, 1);
-            Log("server: dynamic connection %s", cfg.dynamicConnect ? "on" : "off");
+            Say("dynamic connection %s", cfg.dynamicConnect ? "on" : "off");
         }
     }
 
@@ -512,16 +590,27 @@ void OnHostLobby(void* dlg, ULONGLONG now) {
             players++;
             if (st.slotReady >> i & 1) ready++;
         }
+    if (st.forceStart) {
+        st.forceStart = false;
+        if (players > 0 && ready == players && !(G<uint32_t>(X->lobbyState) & LOBBY_STARTING)) {
+            Say("Start (console)");
+            Command(dlg, ID_START);
+            st.readySince = 0;
+            Delay(now, 5000);
+            return;
+        }
+        Say("cannot start yet: %d player(s), %d ready - players must join and press Ready", players, ready);
+    }
     if (players < cfg.minPlayers || ready < players) {
         st.readySince = 0;
         return;
     }
     if (!st.readySince) {
         st.readySince = now;
-        Log("server: %d player(s) ready - starting in %d s", players, cfg.startDelay);
+        Say("%d player(s) ready - starting in %d s", players, cfg.startDelay);
     }
     if (now - st.readySince < (ULONGLONG)cfg.startDelay * 1000) return;
-    Log("server: Start");
+    Say("Start");
     Command(dlg, ID_START);
     st.readySince = 0;
     Delay(now, 5000);
@@ -535,9 +624,11 @@ void InGame(ULONGLONG now) {
         st.inGame = true;
         st.gameSince = now;
         st.observerDone = !cfg.observer;
+        st.gameOverSince = 0;
+        st.emptySince = 0;
         memset(st.peers, 0, sizeof(st.peers));
         st.games++;
-        Log("server: game %d started", st.games);
+        Say("game %d started", st.games);
     }
     auto* table = reinterpret_cast<uint8_t*>(static_cast<uintptr_t>(game.playerTable));
     uint32_t self = G<uint32_t>(X->localDpnid);
@@ -546,9 +637,39 @@ void InGame(ULONGLONG now) {
         uint32_t flags = *reinterpret_cast<uint32_t*>(table + i * 24 + 4);
         if (!(flags & 0x80) || id == self) id = 0;
         if (id != st.peers[i]) {
-            if (st.peers[i]) Log("server: player %08X disconnected", st.peers[i]);
-            if (id) Log("server: player %08X connected", id);
+            if (st.peers[i]) Say("player %08X disconnected", st.peers[i]);
+            if (id) Say("player %08X connected", id);
             st.peers[i] = id;
+        }
+    }
+    // Nobody left: the game itself only notices when the server is already an observer, so
+    // end it the way the "game over" OK does.
+    int connected = 0;
+    for (uint32_t id : st.peers) connected += id != 0;
+    if (connected) {
+        st.emptySince = 0;
+    } else if (!st.emptySince) {
+        st.emptySince = now;
+        Say("no players left - ending the game in %d s", cfg.endDelay);
+    } else if (now - st.emptySince >= (ULONGLONG)cfg.endDelay * 1000 && G<int>(X->gameOverResult) == -1) {
+        G<int>(X->gameOverResult) = GAME_OVER_END;
+        Say("game ended - no players");
+        Delay(now, 3000);
+        return;
+    }
+    // Game over (all players left the observing server, or the level ended): the game shows a
+    // message box (0x4234F0 sets player+0x684) and ends only when its OK stores 6 in the result
+    // that the menu callback polls (0x41EC80) - the same as clicking OK.
+    void* player = G<void*>(X->localPlayer);
+    if (player && Field(player, PLAYER_GAME_OVER) && G<int>(X->gameOverResult) == -1) {
+        if (!st.gameOverSince) {
+            st.gameOverSince = now;
+            Say("game over - ending the game in %d s", cfg.endDelay);
+        } else if (now - st.gameOverSince >= (ULONGLONG)cfg.endDelay * 1000) {
+            G<int>(X->gameOverResult) = GAME_OVER_END;
+            Say("game over confirmed");
+            Delay(now, 3000);
+            return;
         }
     }
     if (!st.observerDone && now - st.gameSince >= (ULONGLONG)cfg.observerDelay * 1000) {
@@ -557,15 +678,91 @@ void InGame(ULONGLONG now) {
             st.observerDone = true;
         } else if (me && ((PlayerFn)(uintptr_t)X->canObserveFn)(me)) {
             ((PlayerFn)(uintptr_t)X->observeFn)(me);
-            Log("server: switched to observer");
+            Say("switched to observer");
             st.observerDone = true;
         }
         Delay(now, 2000);
     }
 }
 
+const char* ScreenName(uint32_t screen) {
+    switch (screen) {
+    case SCR_PROFILE: return "player profile";
+    case SCR_MAIN: return "main menu";
+    case SCR_PROVIDER: return "connection type";
+    case SCR_SESSIONS: return "sessions";
+    case SCR_HOST_LOBBY: return "lobby";
+    case SCR_CLIENT_LOBBY: return "someone else's lobby";
+    case SCR_SERIAL: return "CD key";
+    case SCR_NET_INFO: return "network info";
+    default: return "menu";
+    }
+}
+
+void Status(ULONGLONG now) {
+    if (G<int>(game.gameMode) == 2) {
+        int n = 0;
+        for (uint32_t id : st.peers) n += id != 0;
+        Say("game %d running for %llu min, %d player(s) connected%s", st.games, (now - st.gameSince) / 60000, n,
+            st.observerDone ? ", server is observing" : "");
+        for (int i = 0; i < 8; i++)
+            if (st.peers[i]) Say("  player %08X", st.peers[i]);
+    } else {
+        uint32_t screen = G<uint32_t>(X->screen) & 0xFF;
+        int players = 0, ready = 0;
+        for (int i = 0; i < 8; i++)
+            if (st.slotDpnid[i]) {
+                players++;
+                ready += (st.slotReady >> i & 1);
+            }
+        Say("%s, %d player(s) in the lobby, %d ready, %d game(s) played%s", ScreenName(screen), players, ready,
+            st.games, st.cmdPaused || st.paused ? ", automation PAUSED" : "");
+        for (int i = 0; i < 8; i++)
+            if (st.slotDpnid[i]) Say("  slot %d: player %08X%s", i + 1, st.slotDpnid[i], st.slotReady >> i & 1 ? " (ready)" : "");
+    }
+}
+
+void RunCommands(ULONGLONG now) {
+    if (g_conOut == INVALID_HANDLE_VALUE) return;
+    std::deque<std::string> q;
+    EnterCriticalSection(&g_cmdLock);
+    q.swap(g_cmds);
+    LeaveCriticalSection(&g_cmdLock);
+    HWND wnd = G<HWND>(X->mainWindow);
+    for (const std::string& line : q) {
+        std::string cmd = line.substr(0, line.find(' '));
+        for (char& c : cmd) c = (char)tolower((unsigned char)c);
+        if (cmd == "help" || cmd == "?") {
+            Say("commands: status | start (now, when everyone is ready) | end (end the running game) |");
+            Say("          pause / resume (automation) | show / hide (game window) | quit");
+        } else if (cmd == "status") {
+            Status(now);
+        } else if (cmd == "start") {
+            st.forceStart = true;
+        } else if (cmd == "end") {
+            if (G<int>(game.gameMode) == 2) {
+                G<int>(X->gameOverResult) = GAME_OVER_END;
+                Say("ending the game");
+            } else {
+                Say("no game is running");
+            }
+        } else if (cmd == "pause" || cmd == "resume") {
+            st.cmdPaused = cmd == "pause";
+            Say("automation %s", st.cmdPaused ? "paused" : "resumed");
+        } else if (cmd == "show" || cmd == "hide") {
+            g_showWindow(wnd, cmd == "show" ? SW_SHOWNORMAL : SW_HIDE);
+        } else if (cmd == "quit" || cmd == "exit") {
+            Say("shutting down");
+            PostMessageA(wnd, WM_CLOSE, 0, 0);
+        } else {
+            Say("unknown command \"%s\" - type help", cmd.c_str());
+        }
+    }
+}
+
 void Step() {
     ULONGLONG now = GetTickCount64();
+    RunCommands(now);
     if (cfg.fps > 0) G<uint32_t>(X->framePeriod) = (uint32_t)(G<uint32_t>(game.unitsPerMs) * 1000ull / (unsigned)cfg.fps);
     if (cfg.uniqueIdentity) {
         uint32_t& id = G<uint32_t>(X->installIdHi);
@@ -575,9 +772,9 @@ void Step() {
     bool paused = (GetKeyState(VK_SCROLL) & 1) != 0;
     if (paused != st.paused) {
         st.paused = paused;
-        Log("server: automation %s (Scroll Lock)", paused ? "paused" : "resumed");
+        Say("automation %s (Scroll Lock)", paused ? "paused" : "resumed");
     }
-    if (paused || now < st.nextAction) return;
+    if (paused || st.cmdPaused || now < st.nextAction) return;
 
     if (G<int>(game.gameMode) == 2) {
         InGame(now);
@@ -585,10 +782,10 @@ void Step() {
     }
     if (st.inGame) {
         st.inGame = false;
-        Log("server: game %d ended", st.games);
+        Say("game %d ended", st.games);
         if (!cfg.autoRestart) {
             st.finished = true;
-            Log("server: AutoRestart=0 - automation stopped");
+            Say("AutoRestart=0 - automation stopped");
         }
     }
     if (st.finished) return;
@@ -610,7 +807,7 @@ void Step() {
         g_menuUp = true;
         if (cfg.window == WIN_MINIMIZED) {
             g_showWindow(G<HWND>(X->mainWindow), SW_SHOWMINNOACTIVE);
-            Log("server: menu ready - window minimized");
+            Say("menu ready - window minimized");
         }
     }
     auto cb = Field(dlg, DLG_CALLBACK);
@@ -619,7 +816,7 @@ void Step() {
         return;
     }
     if (cb != X->menuCb) { // a message box or another dialog is on top
-        if (!st.unknownLogged) Log("server: screen 0x%02X shows a dialog with callback %08X - waiting", screen, cb);
+        if (!st.unknownLogged) Say("screen 0x%02X shows a dialog with callback %08X - waiting", screen, cb);
         st.unknownLogged = true;
         return;
     }
@@ -633,12 +830,12 @@ void Step() {
     case SCR_SESSIONS: OnSessions(dlg, now); break;
     case SCR_HOST_LOBBY: OnHostLobby(dlg, now); break;
     case SCR_CLIENT_LOBBY:
-        Log("server: joined someone else's lobby - leaving");
+        Say("joined someone else's lobby - leaving");
         Command(dlg, ID_LOBBY_BACK);
         Delay(now, 3000);
         break;
     default:
-        if (!st.unknownLogged) Log("server: waiting on menu screen 0x%02X", screen);
+        if (!st.unknownLogged) Say("waiting on menu screen 0x%02X", screen);
         st.unknownLogged = true;
         break;
     }
@@ -651,7 +848,7 @@ int __cdecl FrameHook() {
             Step();
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             st.failed = true;
-            Log("server: exception 0x%08X on screen 0x%02X - automation stopped", GetExceptionCode(), st.screen);
+            Say("exception 0x%08X on screen 0x%02X - automation stopped", GetExceptionCode(), st.screen);
         }
     }
     return r;
@@ -699,11 +896,14 @@ bool Verify(const Addrs& a) {
         {0x004087EB, 5, {0x68, 0xAE, 0x05, 0x00, 0x00}},             // serial screen: last field
         {0x00405C57, 7, {0xC7, 0x45, 0xDC, 0xC0, 0x6F, 0x40, 0x00}}, // window class: wndproc 0x406FC0
         {0x00405D17, 5, {0xA3, 0xB4, 0x72, 0x93, 0x00}},             // main window handle
+        {0x004235E3, 10, {0xC7, 0x80, 0x84, 0x06, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00}}, // game over flag
+        {0x004234FA, 10, {0xC7, 0x05, 0x84, 0x98, 0x93, 0x00, 0x06, 0x00, 0x00, 0x00}}, // result = 6 (end)
+        {0x0041ECD9, 5, {0xA1, 0x84, 0x98, 0x93, 0x00}},             // menu callback polls the result
         {0x007D8BD0, 9, {0x55, 0x8B, 0xEC, 0x81, 0xEC, 0x84, 0x00, 0x00, 0x00}}, // input acquire/release
     };
     for (const Sig& s : sigs)
         if (!Match(s.va, s.b, s.n)) {
-            Log("server: signature mismatch at %08X", s.va);
+            Say("signature mismatch at %08X", s.va);
             return false;
         }
     return MatchCall(a.frameSite, a.frameFn) && MatchCall(0x005591AD, a.canObserveFn) &&
@@ -737,9 +937,11 @@ bool Server_LoadConfig(const char* ini) {
     sv.observerDelay  = Int("ObserverDelay", sv.observerDelay);
     sv.fps            = Int("Fps", sv.fps);
     sv.autoRestart    = Int("AutoRestart", sv.autoRestart);
+    sv.endDelay       = Int("EndDelay", sv.endDelay);
     sv.uniqueIdentity = Int("UniqueIdentity", sv.uniqueIdentity);
     sv.mute           = Int("Mute", sv.mute);
-    wchar_t win[16] = L"minimized";
+    sv.console        = Int("Console", sv.console);
+    wchar_t win[16] = L"hidden";
     Str(L"Window", win, 16);
     sv.window = !_wcsicmp(win, L"normal") ? WIN_NORMAL : !_wcsicmp(win, L"hidden") ? WIN_HIDDEN : WIN_MINIMIZED;
     return sv.enabled;
@@ -759,10 +961,17 @@ bool Server_Install(bool ex1, const ServerGameAddrs& g) {
     }
     X = &kEx1;
     game = g;
+    if (cfg.console && OpenConsole()) {
+        char title[192];
+        NarrowName(cfg.sessionName, title, sizeof(title));
+        Say("KnightShift RPG Server (KSNetFix dedicated server " KSSERVER_VERSION ") - \"%s\"", title);
+        Say("log: ksnetfix.log - type help for commands, Ctrl+C or quit to stop");
+    }
     if (cfg.minPlayers < 1) cfg.minPlayers = 1;
     if (cfg.minPlayers > 7) cfg.minPlayers = 7;
     if (cfg.startDelay < 0) cfg.startDelay = 0;
     if (cfg.observerDelay < 0) cfg.observerDelay = 0;
+    if (cfg.endDelay < 0) cfg.endDelay = 0;
     if (cfg.fps < 0 || cfg.fps > 200) cfg.fps = 0;
     if (!cfg.profileName[0]) wcscpy(cfg.profileName, L"Serwer");
     if (!cfg.heroName[0]) wcscpy(cfg.heroName, L"Serwer");
@@ -777,7 +986,7 @@ bool Server_Install(bool ex1, const ServerGameAddrs& g) {
         name, profile, hero, level, cfg.minPlayers, cfg.startDelay, cfg.dynamicConnect, cfg.observer, cfg.fps,
         cfg.autoRestart, cfg.uniqueIdentity);
     static const char* kWindowNames[] = {"normal", "minimized", "hidden"};
-    Log("server: background mode (window %s, never takes the focus, sound %s): %s", kWindowNames[cfg.window],
+    Say("background mode (window %s, never takes the focus, sound %s): %s", kWindowNames[cfg.window],
         cfg.mute ? "off" : "on", InstallBackground() ? "ok" : "FAILED");
     return WriteRel32(X->frameSite, 0xE8, (void*)&FrameHook);
 }

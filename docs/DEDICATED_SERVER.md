@@ -158,6 +158,20 @@ wyłącza go (wpis `server: exception` w logu) zamiast wywracać grę.
 * Wynik: od uruchomienia do lobby RPG ~32 s, okno ani razu na wierzchu, ~10% jednego rdzenia
   przy `Fps=10`; serwer z osobnego folderu (tylko pliki `.exe` + nasze DLL) działa, dane z rejestru.
 
+### Koniec gry i konsola (test 2026-09-28)
+
+* Koniec gry: `0x4234F0(tekst)` ustawia u gracza lokalnego `+0x684 = 1` i pokazuje okno komunikatu
+  (`0x42D250`, flagi 0x1000) z wynikiem w `0x939884`; menu callback `0x41EC80` na takcie 0x113 przy
+  wyniku 6 (lub 1) kończy grę sieciową (zamyka sesję, wraca do menu). `0x4234F0(0)` ustawia 6 bez
+  okna — tę samą drogę wybiera serwer.
+* Gdy serwer jest obserwatorem i nie ma innych graczy, gra sama pokazuje „ObserverEndOfGame”
+  (`0x4B8FC0`). Jeśli gracz wyjdzie, zanim serwer zostanie obserwatorem, postać serwera zostaje
+  aktywna i nic się nie dzieje — dlatego serwer kończy grę także wtedy, gdy przez `EndDelay` s nikt
+  nie jest połączony. Test: wyjście gracza 20:24:21 → koniec gry 20:24:26 → lobby 20:24:42.
+* Konsola: `AllocConsole` przy instalacji, wiadomości `server: ...` idą też do konsoli, wątek czyta
+  komendy do kolejki wykonywanej w wątku gry (`Step`); Ctrl+C / zamknięcie konsoli → `WM_CLOSE` do
+  okna gry (gra wychodzi z sesji i kończy się normalnie).
+
 ## Linux VPS (Wine)
 
 Wielu operatorów będzie chciało Linuksa. Ustalenia:

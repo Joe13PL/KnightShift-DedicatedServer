@@ -30,11 +30,14 @@ ekrany menu dokładnie tak, jak klikałby gracz. Szczegóły i adresy: [`docs/DE
    - wybiera poziom (`Level`) i włącza dołączanie w trakcie gry (`DynamicConnect`);
    - zapisuje w logu wejścia, wyjścia i gotowość graczy;
    - klika „Start”, gdy co najmniej `MinPlayers` graczy jest gotowych przez `StartDelay` s.
-4. Po starcie gracz serwera zostaje obserwatorem (`Observer`). Po końcu gry serwer zakłada sesję
-   od nowa (`AutoRestart`).
-5. Działa w tle: nie zabiera fokusu, nie pauzuje się bez fokusu, rysuje w tle (gra rysuje
-   tylko jako okno na wierzchu, a od tego zależy start do menu), bez dźwięku (`Mute`);
-   okno `Window=minimized` (na pasku zadań), `hidden` (bez okna) albo `normal`.
+4. Po starcie gracz serwera zostaje obserwatorem (`Observer`). Gdy gra się skończy albo wyjdzie
+   ostatni gracz, serwer po `EndDelay` s sam kończy grę (jak „OK” w oknie „koniec gry”) i zakłada
+   sesję od nowa (`AutoRestart`).
+5. **Konsola serwera** (`Console=1`): okno konsoli z bieżącym logiem i komendami `status`, `start`,
+   `end`, `pause`, `resume`, `show`, `hide`, `quit`; Ctrl+C albo zamknięcie konsoli wyłącza serwer.
+   Sama gra jest niewidoczna (`Window=hidden`; także `minimized` albo `normal`).
+   Działa w tle: nie zabiera fokusu, nie pauzuje się bez fokusu, rysuje w tle (gra rysuje
+   tylko jako okno na wierzchu, a od tego zależy start do menu), bez dźwięku (`Mute`).
 6. Dodatkowo:
    - `Fps` ogranicza klatki serwera (10 kl./s ≈ 10% jednego rdzenia);
    - `UniqueIdentity` pozwala właścicielowi grać na własnym serwerze z tym samym kluczem CD;
@@ -76,6 +79,7 @@ python tools/check_server_sigs.py "C:/.../steamapps/common/KnightShift/KnightShi
 ## Plan
 
 - [x] Test w grze (LAN): profil i bohater, menu, lobby, start, obserwator, restart; praca w tle.
+- [x] Konsola serwera, automatyczny koniec gry po wyjściu ostatniego gracza (test 2026-09-28).
 - [ ] Test przez Steam, dołączanie w trakcie gry, klucz CD na czystej maszynie.
 - [ ] Wsparcie `KnightShift.ex2`, komunikaty czatu dla graczy („Kliknij Gotowy”).
 - [ ] **Anonimowy serwer gry Steam** (`SteamGameServer`, bez konta i bez klienta Steam) + lista serwerów
