@@ -195,8 +195,14 @@ Wielu operatorów będzie chciało Linuksa. Ustalenia:
   wgrać plikiem `.reg`, bo SteamCMD nie uruchamia skryptu instalacyjnego.
 * **Pliki gry:** z własnej kopii (SteamCMD z loginem właściciela gry albo skopiowane z PC).
 
-Do zrobienia: pakiet `server/linux` (skrypt przygotowania prefiksu Wine: `corefonts`, `.reg`,
-`steamclient.dll`; uruchomienie przez Xvfb; usługa systemd) — po fazie C i teście na Windows.
+Pakiet `server/linux/` (2026-09-28): `setup.sh` (prefiks win32, `corefonts`, import
+`knightshift.reg` z podstawioną ścieżką gry), `run.sh` (Xvfb + `wine KnightShift.ex1`
+bezpośrednio, log i komendy w terminalu), `knightshift-server.service` (systemd), README.
+Potwierdzone na Windows: `KnightShift.ex1` startuje bez launchera i sięga lobby; konsola
+`Console=stdio` pisze log i czyta komendy przez przekierowane stdin/stdout (odpowiednik terminala
+pod Wine); `Console=auto` wybiera stdio, gdy stdout/stdin są podłączone, inaczej okno. Na żywym
+Linuksie jeszcze nietestowane; klienta Steam nie potrzeba, bo klucze rejestru zastępują
+`installscript` (anonimowy serwer Steam z `steamclient.dll` dotyczy dopiero fazy Steam).
 
 ## Plan
 

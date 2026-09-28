@@ -1,0 +1,24 @@
+[Unit]
+# systemd service for the KnightShift dedicated server (Linux, Wine).
+# Copy to /etc/systemd/system/, edit User and the two paths, then:
+#   sudo systemctl daemon-reload && sudo systemctl enable --now knightshift-server
+# Logs: journalctl -u knightshift-server -f  (also GAMEDIR/ksnetfix.log)
+# No terminal, so the server takes no typed commands - control it with systemctl.
+Description=KnightShift dedicated RPG server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=knightshift
+Environment=WINEPREFIX=/home/knightshift/.knightshift-server
+# Adjust the repo path and the game dir to your install.
+ExecStart=/home/knightshift/KnightShift-DedicatedServer/server/linux/run.sh /home/knightshift/ks-server
+Restart=always
+RestartSec=10
+# Give Wine time to leave the session on stop.
+TimeoutStopSec=30
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target

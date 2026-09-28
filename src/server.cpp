@@ -302,7 +302,9 @@ void Delay(ULONGLONG now, DWORD ms) { st.nextAction = now + ms; }
 // Console: the face of the server (live log + commands) while the game stays hidden.
 // Commands are queued by an input thread and run on the game's main thread in Step().
 // ---------------------------------------------------------------------------
+enum : int { CON_OFF = 0, CON_AUTO = 1, CON_WINDOW = 2, CON_STDIO = 3 };
 HANDLE g_conOut = INVALID_HANDLE_VALUE;
+HANDLE g_conIn = INVALID_HANDLE_VALUE;
 CRITICAL_SECTION g_cmdLock;
 std::deque<std::string> g_cmds;
 
@@ -326,22 +328,26 @@ void Say(const char* fmt, ...) {
 }
 
 DWORD WINAPI ConsoleInput(void*) {
-    HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
+    std::string acc;
     for (;;) {
-        char line[256];
+        char buf[256];
         DWORD n = 0;
-        if (!ReadConsoleA(in, line, sizeof(line) - 1, &n, nullptr)) {
+        if (!ReadFile(g_conIn, buf, sizeof(buf), &n, nullptr) || n == 0) {
             Sleep(200);
             continue;
         }
-        line[n] = 0;
-        std::string cmd(line);
-        while (!cmd.empty() && (unsigned char)cmd.back() <= ' ') cmd.pop_back();
-        while (!cmd.empty() && (unsigned char)cmd.front() <= ' ') cmd.erase(0, 1);
-        if (cmd.empty()) continue;
-        EnterCriticalSection(&g_cmdLock);
-        g_cmds.push_back(cmd);
-        LeaveCriticalSection(&g_cmdLock);
+        acc.append(buf, n);
+        size_t nl;
+        while ((nl = acc.find('\n')) != std::string::npos) {
+            std::string cmd = acc.substr(0, nl);
+            acc.erase(0, nl + 1);
+            while (!cmd.empty() && (unsigned char)cmd.back() <= ' ') cmd.pop_back();
+            while (!cmd.empty() && (unsigned char)cmd.front() <= ' ') cmd.erase(0, 1);
+            if (cmd.empty()) continue;
+            EnterCriticalSection(&g_cmdLock);
+            g_cmds.push_back(cmd);
+            LeaveCriticalSection(&g_cmdLock);
+        }
     }
 }
 
@@ -352,14 +358,33 @@ BOOL WINAPI ConsoleCtrl(DWORD type) {
     return TRUE;
 }
 
+// Usable when launched from a terminal / pipe (a Unix tty under Wine, or a Windows console):
+// the standard handle exists and has a known file type.
+static bool StdHandleUsable(DWORD which) {
+    HANDLE h = GetStdHandle(which);
+    if (!h || h == INVALID_HANDLE_VALUE) return false;
+    DWORD type = GetFileType(h) & ~FILE_TYPE_REMOTE;
+    return type != FILE_TYPE_UNKNOWN;
+}
+
 bool OpenConsole() {
-    if (!AllocConsole()) return false;
-    SetConsoleOutputCP(CP_UTF8);
-    wchar_t title[160];
-    _snwprintf(title, 159, L"KnightShift RPG Server - %s", cfg.sessionName);
-    title[159] = 0;
-    SetConsoleTitleW(title);
+    if (cfg.console == CON_OFF) return false;
+    bool stdio = cfg.console == CON_STDIO ||
+                 (cfg.console == CON_AUTO && StdHandleUsable(STD_OUTPUT_HANDLE) && StdHandleUsable(STD_INPUT_HANDLE));
+    if (!stdio) {
+        if (!AllocConsole()) return false;
+        SetConsoleOutputCP(CP_UTF8);
+        wchar_t title[160];
+        _snwprintf(title, 159, L"KnightShift RPG Server - %s", cfg.sessionName);
+        title[159] = 0;
+        SetConsoleTitleW(title);
+    }
     g_conOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    g_conIn = GetStdHandle(STD_INPUT_HANDLE);
+    if (g_conOut == INVALID_HANDLE_VALUE || g_conIn == INVALID_HANDLE_VALUE) {
+        g_conOut = INVALID_HANDLE_VALUE;
+        return false;
+    }
     InitializeCriticalSection(&g_cmdLock);
     SetConsoleCtrlHandler(ConsoleCtrl, TRUE);
     HANDLE t = CreateThread(nullptr, 0, ConsoleInput, nullptr, 0, nullptr);
@@ -951,7 +976,12 @@ bool Server_LoadConfig(const char* ini) {
     sv.endDelay       = Int("EndDelay", sv.endDelay);
     sv.uniqueIdentity = Int("UniqueIdentity", sv.uniqueIdentity);
     sv.mute           = Int("Mute", sv.mute);
-    sv.console        = Int("Console", sv.console);
+    wchar_t con[16] = L"auto";
+    Str(L"Console", con, 16);
+    sv.console = !_wcsicmp(con, L"0") || !_wcsicmp(con, L"off") ? CON_OFF
+               : !_wcsicmp(con, L"window") ? CON_WINDOW
+               : !_wcsicmp(con, L"stdio") ? CON_STDIO
+               : CON_AUTO;
     wchar_t render[16] = L"startup";
     Str(L"Render", render, 16);
     sv.render = !_wcsicmp(render, L"always") ? RENDER_ALWAYS : RENDER_STARTUP;

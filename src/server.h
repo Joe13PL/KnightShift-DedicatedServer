@@ -24,7 +24,7 @@ struct ServerSettings {
     int uniqueIdentity = 1;     // players with the server's CD key can still join
     int window = 2;             // 0 normal, 1 minimized, 2 hidden - never takes the focus
     int mute = 1;               // no sound (the game sees no sound device)
-    int console = 1;            // server console window: live log + commands
+    int console = 1;            // 0 off, 1 auto, 2 window (AllocConsole), 3 stdio (terminal/Wine)
     int render = 0;             // 0 = draw only until the first menu (start-up needs it), 1 = always
 };
 

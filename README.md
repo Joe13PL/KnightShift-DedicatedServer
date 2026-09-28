@@ -33,13 +33,13 @@ ekrany menu dokładnie tak, jak klikałby gracz. Szczegóły i adresy: [`docs/DE
 4. Po starcie gracz serwera zostaje obserwatorem (`Observer`). Gdy gra się skończy albo wyjdzie
    ostatni gracz, serwer po `EndDelay` s sam kończy grę (jak „OK” w oknie „koniec gry”) i zakłada
    sesję od nowa (`AutoRestart`).
-5. **Konsola serwera** (`Console=1`): okno konsoli z bieżącym logiem i komendami `status`, `start`,
-   `end`, `pause`, `resume`, `show`, `hide`, `quit`; Ctrl+C albo zamknięcie konsoli wyłącza serwer.
-   Sama gra jest niewidoczna (`Window=hidden`; także `minimized` albo `normal`).
-   Działa w tle: nie zabiera fokusu, nie pauzuje się bez fokusu, rysuje w tle (gra rysuje
-   tylko jako okno na wierzchu, a od tego zależy start do menu), bez dźwięku (`Mute`).
+5. **Konsola serwera** (`Console`): bieżący log i komendy `status`, `start`, `end`, `pause`,
+   `resume`, `show`, `hide`, `quit`; Ctrl+C wyłącza serwer. `Console=auto` daje terminal, gdy serwer
+   uruchomiono z terminala (Linux/Wine), a osobne okno konsoli na Windows; `window`/`stdio`/`off`
+   wymuszają wariant. Sama gra jest niewidoczna (`Window=hidden`; też `minimized`, `normal`).
+   Działa w tle: nie zabiera fokusu, nie pauzuje się bez fokusu, bez dźwięku (`Mute`).
 6. Dodatkowo:
-   - `Fps` ogranicza klatki serwera (10 kl./s ≈ 10% jednego rdzenia);
+   - `Render=startup` rysuje tylko do wejścia do menu (potem 0% GPU); `Fps` ogranicza klatki;
    - `UniqueIdentity` pozwala właścicielowi grać na własnym serwerze z tym samym kluczem CD;
    - Scroll Lock wstrzymuje automat, żeby można było klikać samemu.
 
@@ -80,13 +80,13 @@ python tools/check_server_sigs.py "C:/.../steamapps/common/KnightShift/KnightShi
 
 - [x] Test w grze (LAN): profil i bohater, menu, lobby, start, obserwator, restart; praca w tle.
 - [x] Konsola serwera, automatyczny koniec gry po wyjściu ostatniego gracza (test 2026-09-28).
+- [x] Ograniczenie grafiki (`Render=startup`) i konsola przez terminal (`Console=stdio`); w lobby 0% GPU.
 - [ ] Test przez Steam, dołączanie w trakcie gry, klucz CD na czystej maszynie.
-- [ ] Wsparcie `KnightShift.ex2`, komunikaty czatu dla graczy („Kliknij Gotowy”).
+- [x] **Linux VPS przez Wine:** skrypty w [`server/linux/`](server/linux/) (Xvfb, prefiks Wine, rejestr
+      gry, systemd) i log/komendy w terminalu — **jeszcze nieprzetestowane na żywym Linuksie**.
 - [ ] **Anonimowy serwer gry Steam** (`SteamGameServer`, bez konta i bez klienta Steam) + lista serwerów
-      w grze — warunek VPS, zwłaszcza na Linuksie.
-- [ ] **Linux VPS przez Wine:** Xvfb + programowe renderowanie, `WINEDLLOVERRIDES="dinput8=n,b"`, pliki
-      rejestru gry, usługa systemd. Gra nie ma DRM Steam, więc działa bez klienta Steam.
-- [ ] Usługa Windows, restart po awarii.
+      w grze — gra przez Steam bez zalogowanego klienta na serwerze.
+- [ ] Wsparcie `KnightShift.ex2`, komunikaty czatu dla graczy („Kliknij Gotowy”), usługa Windows.
 
 ## Licencja i zastrzeżenia
 
