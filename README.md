@@ -84,8 +84,10 @@ python tools/check_server_sigs.py "C:/.../steamapps/common/KnightShift/KnightShi
 - [ ] Test przez Steam, dołączanie w trakcie gry, klucz CD na czystej maszynie.
 - [x] **Linux VPS przez Wine:** skrypty w [`server/linux/`](server/linux/) (Xvfb, prefiks Wine, rejestr
       gry, systemd) i log/komendy w terminalu — **jeszcze nieprzetestowane na żywym Linuksie**.
-- [ ] **Anonimowy serwer gry Steam** (`SteamGameServer`, bez konta i bez klienta Steam) + lista serwerów
-      w grze — gra przez Steam bez zalogowanego klienta na serwerze.
+- [~] **Anonimowy serwer gry Steam** (`[Steam] GameServer=1`): logowanie anonimowe (`SteamGameServer`),
+      ruch przez `SteamGameServerNetworkingMessages` (SDR). Bez konta i bez klienta Steam; gracze
+      dołączają po SteamID64 serwera. Zbudowane, transport instaluje się — **pełny test na żywo przed nami**;
+      lista serwerów w grze (zamiast wpisywania SteamID) później.
 - [ ] Wsparcie `KnightShift.ex2`, komunikaty czatu dla graczy („Kliknij Gotowy”), usługa Windows.
 
 ## Licencja i zastrzeżenia

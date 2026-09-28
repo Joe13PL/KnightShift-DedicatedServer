@@ -172,6 +172,29 @@ wyłącza go (wpis `server: exception` w logu) zamiast wywracać grę.
   komendy do kolejki wykonywanej w wątku gry (`Step`); Ctrl+C / zamknięcie konsoli → `WM_CLOSE` do
   okna gry (gra wychodzi z sesji i kończy się normalnie).
 
+## Anonimowy serwer Steam (faza C, eksperymentalne)
+
+Transport Steam (`KSNetFix/src/steampeer.cpp`) ma teraz dwa tryby:
+
+* **user** (domyślny): loguje się kontem gracza, sesje przez lobby Steam. Wymaga klienta Steam
+  i gry na koncie. Dwie instancje na jednym koncie nie połączą się przez Steam.
+* **gameserver** (`[Steam] GameServer=1`): `SteamGameServer_InitEx(..., eServerModeNoAuthentication)`
+  + `LogOnAnonymous()`, komunikaty przez `SteamGameServerNetworkingMessages` (kanał 7), akceptacja
+  sesji przez `CCallback<..., true>` na potoku serwera gry. Serwer ma własny SteamID typu „serwer
+  gry”, więc **nie potrzebuje konta ani zalogowanego klienta gracza**, a właściciel może grać na
+  własnym serwerze na jednym PC (inny SteamID niż konto gracza — brak blokady „dwie instancje,
+  jedno konto”). Host nie tworzy lobby; adresem jest SteamID serwera.
+
+Wykrywanie w v1: **bezpośrednie po SteamID** — serwer wypisuje swój SteamID64 w konsoli/logu,
+gracz wpisuje go w polu adresu (gra już to obsługuje). Lista serwerów (`ISteamMatchmakingServers`
++ rejestracja na master serwerze) to późniejszy krok.
+
+Stan: kompiluje się, transport instaluje się („anonymous game server: ok”). Pełny test na żywo
+(logowanie anonimowe + klient łączący się po SteamID) jeszcze nieprzeprowadzony. Uwaga: druga
+instancja gry startuje poprawnie tylko, gdy inna kopia gry nie działała już wcześniej na tym PC
+(kolejność: najpierw serwer, potem klient). Na VPS bez klienta Steam potrzebny będzie
+`steamclient.dll` z SteamCMD (Steamworks SDK Redist, app 1007).
+
 ## Linux VPS (Wine)
 
 Wielu operatorów będzie chciało Linuksa. Ustalenia:
