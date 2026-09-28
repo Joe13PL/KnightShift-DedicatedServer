@@ -141,6 +141,23 @@ serwera i klienta na jednym komputerze. Wszystkie adresy są weryfikowane sygnat
 (`tools/check_server_sigs.py` sprawdza je offline na `KnightShift.ex1`). Wyjątek w automacie
 wyłącza go (wpis `server: exception` w logu) zamiast wywracać grę.
 
+### Praca w tle (test 2026-09-28)
+
+* Procedura okna gry (0x406FC0) przy utracie fokusu pauzuje menu i woła `SetForegroundWindow`
+  na sobie (odbiera fokus); dopiero gdy to się nie uda, zwalnia DirectInput (`0x7D8BD0(0)`).
+* Render (0x88AE80) rysuje tylko, gdy `GetForegroundWindow()` to okno gry — a start aż do
+  pierwszego menu (`0x417430`: grafika, potem menu) idzie przez render. Bez fokusu gra stoi
+  w `gameMode 5` bez okna menu.
+* Direct3D nie wystartuje w oknie zminimalizowanym (gra kończy się po ~1 s).
+* Serwer: własna procedura okna (podmiana przy `RegisterClassA` klasy `EARTH2150_GAME`) — utrata
+  fokusu tylko zwalnia wejście; `SetForegroundWindow` gry nic nie robi; `GetForegroundWindow`
+  zwraca okno gry (render w tle); `ShowWindow` według `Window` (przy `minimized` okno jest ukryte
+  do pierwszego menu, potem minimalizowane); `Mute`: `DirectSoundEnumerateA` (dsound, ordinal 2)
+  nie zwraca urządzeń — ścieżka „PC bez karty dźwiękowej”, wynik inicjalizacji dźwięku nie jest
+  sprawdzany; mutex „Earth 2150” zamieniony na własny, więc obok działa zwykła gra.
+* Wynik: od uruchomienia do lobby RPG ~32 s, okno ani razu na wierzchu, ~10% jednego rdzenia
+  przy `Fps=10`; serwer z osobnego folderu (tylko pliki `.exe` + nasze DLL) działa, dane z rejestru.
+
 ## Linux VPS (Wine)
 
 Wielu operatorów będzie chciało Linuksa. Ustalenia:

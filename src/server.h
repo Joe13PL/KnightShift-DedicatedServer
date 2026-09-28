@@ -21,6 +21,8 @@ struct ServerSettings {
     int fps = 10;               // frame cap of the server (0 = game default)
     int autoRestart = 1;        // host a new session after a game ends
     int uniqueIdentity = 1;     // players with the server's CD key can still join
+    int window = 1;             // 0 normal, 1 minimized, 2 hidden - never takes the focus
+    int mute = 1;               // no sound (the game sees no sound device)
 };
 
 struct ServerGameAddrs {

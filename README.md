@@ -5,8 +5,10 @@ Serwer dedykowany trybu **RPG** dla **KnightShift (Polanie II)**, wersja Steam 1
 gotowi, a potem tylko hostuje (gracz serwera zostaje obserwatorem). Cel: stały świat RPG na PC albo
 VPS (Windows, docelowo też Linux), do którego gracze wchodzą w trakcie gry.
 
-> **Stan: prototyp, jeszcze nieprzetestowany w grze.** Kod i adresy są zweryfikowane offline
-> (sygnatury na `KnightShift.ex1`), pierwsze testy w grze są w toku. Nie używaj jeszcze do grania.
+> **Stan: prototyp.** Test w grze na jednym PC (LAN, 2026-09-28): serwer sam założył profil
+> i postać, sesję RPG, wystartował grę po „Gotowy”, przeszedł w obserwatora, a po wyjściu gracza
+> założył sesję od nowa; 0 rozjazdów stanu gry. Nie sprawdzono jeszcze gry przez Steam
+> i dołączania w trakcie gry.
 
 *English summary [below](#english).*
 
@@ -30,13 +32,20 @@ ekrany menu dokładnie tak, jak klikałby gracz. Szczegóły i adresy: [`docs/DE
    - klika „Start”, gdy co najmniej `MinPlayers` graczy jest gotowych przez `StartDelay` s.
 4. Po starcie gracz serwera zostaje obserwatorem (`Observer`). Po końcu gry serwer zakłada sesję
    od nowa (`AutoRestart`).
-5. Dodatkowo:
-   - `Fps` ogranicza klatki serwera;
+5. Działa w tle: nie zabiera fokusu, nie pauzuje się bez fokusu, rysuje w tle (gra rysuje
+   tylko jako okno na wierzchu, a od tego zależy start do menu), bez dźwięku (`Mute`);
+   okno `Window=minimized` (na pasku zadań), `hidden` (bez okna) albo `normal`.
+6. Dodatkowo:
+   - `Fps` ogranicza klatki serwera (10 kl./s ≈ 10% jednego rdzenia);
    - `UniqueIdentity` pozwala właścicielowi grać na własnym serwerze z tym samym kluczem CD;
    - Scroll Lock wstrzymuje automat, żeby można było klikać samemu.
 
-Na jednym PC serwerem jest tylko pierwsza instancja gry, więc serwer i klienta da się przetestować
-lokalnie: `AllowMultipleInstances=1`, `[Steam] Enabled=0`, dołączanie przez TCP/IP.
+Serwer działa z **osobnego folderu** obok zwykłej instalacji: wystarczą w nim `KnightShift.exe`,
+`KnightShift.ex1`, `KnightShift.ex2`, `ijl10.dll` z folderu gry oraz `dinput8.dll`, `steam_api.dll`
+i `ksnetfix.ini` z `build/` — dane gra czyta z instalacji (rejestr), profil „Serwer” trafia do
+`Players` gry. Serwer używa własnego mutexa, więc na tym samym PC można normalnie uruchomić grę
+i dołączyć (na razie przez LAN, `[Steam] Enabled=0` u obu — dwie gry na jednym koncie Steam nie
+połączą się przez Steam, to rozwiąże anonimowy serwer Steam z planu).
 
 ## Wymagania
 
@@ -54,8 +63,9 @@ cd KnightShift-DedicatedServer
 ```
 
 Narzędzia jak dla KSNetFix: Git Bash, Visual Studio 2022 (C++ x86), Steamworks SDK w `./sdk` albo
-`STEAMWORKS_SDK`. Skopiuj trzy pliki z `build/` do folderu gry na maszynie serwera, ustaw sekcję
-`[Server]` w `ksnetfix.ini` i uruchom grę. Przebieg widać w `ksnetfix.log` (linie `server: ...`).
+`STEAMWORKS_SDK`. Przygotuj folder serwera (wyżej) albo skopiuj trzy pliki z `build/` do folderu
+gry na maszynie serwera, ustaw sekcję `[Server]` w `ksnetfix.ini` i uruchom `KnightShift.exe` z tego
+folderu. Przebieg widać w `ksnetfix.log` (linie `server: ...`).
 
 Sprawdzenie adresów bez uruchamiania gry (np. po aktualizacji gry):
 
@@ -65,8 +75,9 @@ python tools/check_server_sigs.py "C:/.../steamapps/common/KnightShift/KnightShi
 
 ## Plan
 
-- [ ] Test w grze: klucz, profil i bohater, menu, lobby, start, obserwator, dołączanie w trakcie, restart.
-- [ ] Wsparcie `KnightShift.ex2`, wyciszenie dźwięku, okno w tle, komunikaty czatu dla graczy.
+- [x] Test w grze (LAN): profil i bohater, menu, lobby, start, obserwator, restart; praca w tle.
+- [ ] Test przez Steam, dołączanie w trakcie gry, klucz CD na czystej maszynie.
+- [ ] Wsparcie `KnightShift.ex2`, komunikaty czatu dla graczy („Kliknij Gotowy”).
 - [ ] **Anonimowy serwer gry Steam** (`SteamGameServer`, bez konta i bez klienta Steam) + lista serwerów
       w grze — warunek VPS, zwłaszcza na Linuksie.
 - [ ] **Linux VPS przez Wine:** Xvfb + programowe renderowanie, `WINEDLLOVERRIDES="dinput8=n,b"`, pliki

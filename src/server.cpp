@@ -51,14 +51,18 @@ struct Addrs {
     uint32_t canObserveFn, observeFn;     // fastcall(player)
     uint32_t framePeriod;                 // main loop minimum frame time (clock units)
     uint32_t installIdHi;                 // high dword of the identity decoded from the CD key
+    uint32_t inputActivateFn;             // cdecl(int): acquire / release DirectInput keyboard + mouse
+    uint32_t mainWindow;                  // HWND of the game window
 };
 
 const Addrs kEx1 = {
     0x00405FF0, 0x007575F0, 0x0041EC80, 0x0055F210, 0x0093988C, 0x00939824, 0x007B0B30,
     0x00F62384, 0x00F62388, 0x00900928, 0x00900948, 0x00F63414, 0x00F6341C, 0x00F632D8, 0x00F626DC,
     0x00F6279C, 0x00F627A0, 0x00F62768, 0x00F6276C, 0x00F6226C, 0x0097B378,
-    0x004B8CA0, 0x004B8D70, 0x00937268, 0x00937914,
+    0x004B8CA0, 0x004B8D70, 0x00937268, 0x00937914, 0x007D8BD0, 0x009372B4,
 };
+
+const char kWindowClass[] = "EARTH2150_GAME"; // main game window
 
 // Menu screens (low byte of the screen variable) and control ids (dialog resources).
 enum Screen : uint32_t {
@@ -128,6 +132,117 @@ bool SelectListItem(void* dlg, int id, int index, bool notify) {
     ((SetSelFn)VFn(c, VT_LIST_SET_SEL))(c, index);
     if (notify) ((MenuCbFn)(uintptr_t)Field(dlg, DLG_CALLBACK))(dlg, MSG_SELECT, id, 0);
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// Running in the background
+//
+// On deactivation the game's window procedure (0x406FC0) pauses the menus and calls
+// SetForegroundWindow on itself to grab the focus back; only when that fails does it
+// release DirectInput. The renderer (0x88AE80) draws only while GetForegroundWindow() is
+// the game window - and the start-up up to the first menu runs through rendering. A server
+// must keep running without the focus, so it gets its own window procedure (installed when
+// the game registers its window class), the game's SetForegroundWindow / ShowWindow calls
+// are redirected, GetForegroundWindow reports the game window, and with Mute the game finds
+// no sound device (the same path as a PC without a sound card). Direct3D cannot start in a
+// minimized window, so "minimized" keeps the window hidden until the first menu is up.
+// ---------------------------------------------------------------------------
+enum : int { WIN_NORMAL = 0, WIN_MINIMIZED = 1, WIN_HIDDEN = 2 };
+
+typedef ATOM(WINAPI* RegisterClassAFn)(const WNDCLASSA*);
+typedef BOOL(WINAPI* ShowWindowFn)(HWND, int);
+typedef int(__cdecl* InputActivateFn)(int active);
+
+RegisterClassAFn g_registerClassA;
+ShowWindowFn g_showWindow;
+WNDPROC g_gameWndProc;
+bool g_menuUp;              // first menu reached: a minimized window is safe from now on
+
+LRESULT CALLBACK ServerWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    if (m == WM_ACTIVATE && LOWORD(w) == WA_INACTIVE) {
+        ((InputActivateFn)(uintptr_t)X->inputActivateFn)(0); // let go of keyboard and mouse only
+        return DefWindowProcA(h, m, w, l);
+    }
+    return CallWindowProcA(g_gameWndProc, h, m, w, l);
+}
+
+ATOM WINAPI HookRegisterClassA(const WNDCLASSA* wc) {
+    if (wc && wc->lpszClassName && !IS_INTRESOURCE(wc->lpszClassName) && !strcmp(wc->lpszClassName, kWindowClass)) {
+        WNDCLASSA copy = *wc;
+        g_gameWndProc = copy.lpfnWndProc;
+        copy.lpfnWndProc = ServerWndProc;
+        return g_registerClassA(&copy);
+    }
+    return g_registerClassA(wc);
+}
+
+bool IsGameWindow(HWND h) { return h && (WNDPROC)GetClassLongPtrA(h, GCLP_WNDPROC) == ServerWndProc; }
+
+BOOL WINAPI HookShowWindow(HWND h, int cmd) {
+    if (cmd != SW_HIDE && IsGameWindow(h)) {
+        if (cfg.window == WIN_HIDDEN || (cfg.window == WIN_MINIMIZED && !g_menuUp))
+            cmd = SW_HIDE;
+        else if (cfg.window == WIN_MINIMIZED)
+            cmd = SW_SHOWMINNOACTIVE;
+        else
+            cmd = SW_SHOWNOACTIVATE;
+    }
+    return g_showWindow(h, cmd);
+}
+
+BOOL WINAPI HookSetForegroundWindow(HWND h) {
+    return IsGameWindow(h) ? TRUE : SetForegroundWindow(h);
+}
+
+HWND WINAPI HookGetForegroundWindow() {
+    HWND game = G<HWND>(X->mainWindow);
+    return game ? game : GetForegroundWindow();
+}
+
+HRESULT WINAPI HookDirectSoundEnumerateA(void*, void*) { return 0; } // DS_OK, no devices
+
+// The game refuses to start a second copy through the named mutex "Earth 2150". The server
+// uses its own name, so a player can run the normal game next to it on the same PC.
+HANDLE WINAPI HookCreateMutexA(LPSECURITY_ATTRIBUTES sa, BOOL owner, LPCSTR name) {
+    if (name && !strcmp(name, "Earth 2150")) name = "Earth 2150 (KSNetFix server)";
+    return CreateMutexA(sa, owner, name);
+}
+
+// IAT slot of an import of the game executable, by name or (name == nullptr) by ordinal.
+void** ImportSlot(const char* dll, const char* name, WORD ordinal) {
+    auto* base = (uint8_t*)GetModuleHandleA(nullptr);
+    auto* nt = (IMAGE_NT_HEADERS*)(base + ((IMAGE_DOS_HEADER*)base)->e_lfanew);
+    auto& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if (!dir.VirtualAddress) return nullptr;
+    for (auto* d = (IMAGE_IMPORT_DESCRIPTOR*)(base + dir.VirtualAddress); d->Name; d++) {
+        if (_stricmp((const char*)(base + d->Name), dll) != 0) continue;
+        auto* names = (IMAGE_THUNK_DATA*)(base + (d->OriginalFirstThunk ? d->OriginalFirstThunk : d->FirstThunk));
+        auto* iat = (IMAGE_THUNK_DATA*)(base + d->FirstThunk);
+        for (; names->u1.AddressOfData; names++, iat++) {
+            bool byOrdinal = IMAGE_SNAP_BY_ORDINAL(names->u1.Ordinal);
+            if (byOrdinal ? (!name && IMAGE_ORDINAL(names->u1.Ordinal) == ordinal)
+                          : (name && !strcmp((const char*)((IMAGE_IMPORT_BY_NAME*)(base + names->u1.AddressOfData))->Name, name)))
+                return (void**)&iat->u1.Function;
+        }
+    }
+    return nullptr;
+}
+
+template <class F> bool HookImport(const char* dll, const char* name, WORD ordinal, void* hook, F* original) {
+    void** slot = ImportSlot(dll, name, ordinal);
+    if (!slot) return false;
+    if (original) *original = (F)*slot;
+    return WriteCode((uint32_t)(uintptr_t)slot, &hook, sizeof(hook));
+}
+
+bool InstallBackground() {
+    bool ok = HookImport("user32.dll", "RegisterClassA", 0, (void*)&HookRegisterClassA, &g_registerClassA) &&
+              HookImport("user32.dll", "ShowWindow", 0, (void*)&HookShowWindow, &g_showWindow) &&
+              HookImport<void*>("user32.dll", "SetForegroundWindow", 0, (void*)&HookSetForegroundWindow, nullptr) &&
+              HookImport<void*>("user32.dll", "GetForegroundWindow", 0, (void*)&HookGetForegroundWindow, nullptr) &&
+              HookImport<void*>("kernel32.dll", "CreateMutexA", 0, (void*)&HookCreateMutexA, nullptr);
+    if (ok && cfg.mute) ok = HookImport<void*>("dsound.dll", nullptr, 2, (void*)&HookDirectSoundEnumerateA, nullptr);
+    return ok;
 }
 
 // The host rejects a joining player whose identity (decoded from the CD key) equals its
@@ -491,6 +606,13 @@ void Step() {
         return;
     }
     if (!dlg || now - st.screenSince < 1500) return; // let the screen settle
+    if (!g_menuUp) {
+        g_menuUp = true;
+        if (cfg.window == WIN_MINIMIZED) {
+            g_showWindow(G<HWND>(X->mainWindow), SW_SHOWMINNOACTIVE);
+            Log("server: menu ready - window minimized");
+        }
+    }
     auto cb = Field(dlg, DLG_CALLBACK);
     if (cb == X->heroCb) {
         OnHeroDialog(dlg, now);
@@ -575,6 +697,9 @@ bool Verify(const Addrs& a) {
         {0x0083C24B, 6, {0x3B, 0x35, 0x14, 0x79, 0x93, 0x00}},       // join: compare with own identity
         {0x004087A5, 5, {0x68, 0x84, 0x04, 0x00, 0x00}},             // serial screen: first field
         {0x004087EB, 5, {0x68, 0xAE, 0x05, 0x00, 0x00}},             // serial screen: last field
+        {0x00405C57, 7, {0xC7, 0x45, 0xDC, 0xC0, 0x6F, 0x40, 0x00}}, // window class: wndproc 0x406FC0
+        {0x00405D17, 5, {0xA3, 0xB4, 0x72, 0x93, 0x00}},             // main window handle
+        {0x007D8BD0, 9, {0x55, 0x8B, 0xEC, 0x81, 0xEC, 0x84, 0x00, 0x00, 0x00}}, // input acquire/release
     };
     for (const Sig& s : sigs)
         if (!Match(s.va, s.b, s.n)) {
@@ -582,7 +707,7 @@ bool Verify(const Addrs& a) {
             return false;
         }
     return MatchCall(a.frameSite, a.frameFn) && MatchCall(0x005591AD, a.canObserveFn) &&
-           MatchCall(0x005591BC, a.observeFn);
+           MatchCall(0x005591BC, a.observeFn) && MatchCall(0x0040710E, a.inputActivateFn);
 }
 
 } // namespace
@@ -613,6 +738,10 @@ bool Server_LoadConfig(const char* ini) {
     sv.fps            = Int("Fps", sv.fps);
     sv.autoRestart    = Int("AutoRestart", sv.autoRestart);
     sv.uniqueIdentity = Int("UniqueIdentity", sv.uniqueIdentity);
+    sv.mute           = Int("Mute", sv.mute);
+    wchar_t win[16] = L"minimized";
+    Str(L"Window", win, 16);
+    sv.window = !_wcsicmp(win, L"normal") ? WIN_NORMAL : !_wcsicmp(win, L"hidden") ? WIN_HIDDEN : WIN_MINIMIZED;
     return sv.enabled;
 }
 
@@ -647,5 +776,8 @@ bool Server_Install(bool ex1, const ServerGameAddrs& g) {
         "(Scroll Lock pauses the automation)",
         name, profile, hero, level, cfg.minPlayers, cfg.startDelay, cfg.dynamicConnect, cfg.observer, cfg.fps,
         cfg.autoRestart, cfg.uniqueIdentity);
+    static const char* kWindowNames[] = {"normal", "minimized", "hidden"};
+    Log("server: background mode (window %s, never takes the focus, sound %s): %s", kWindowNames[cfg.window],
+        cfg.mute ? "off" : "on", InstallBackground() ? "ok" : "FAILED");
     return WriteRel32(X->frameSite, 0xE8, (void*)&FrameHook);
 }

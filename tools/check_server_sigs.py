@@ -25,8 +25,8 @@ def is_call(site, target):
     rel = struct.unpack("<i", pe.get_data(site + 1 - ib, 4))[0]
     return pe.get_data(site - ib, 1) == b"\xe8" and site + 5 + rel == target
 
-# Call sites checked with MatchCall in server.cpp (main loop hook, observer helpers).
-for site, target in ((0x405FF0, 0x7575F0), (0x5591AD, 0x4B8CA0), (0x5591BC, 0x4B8D70)):
+# Call sites checked with MatchCall in server.cpp (main loop hook, observer, input release).
+for site, target in ((0x405FF0, 0x7575F0), (0x5591AD, 0x4B8CA0), (0x5591BC, 0x4B8D70), (0x40710E, 0x7D8BD0)):
     good = is_call(site, target)
     ok &= good
     print("call %08X -> %08X %s" % (site, target, "ok" if good else "MISMATCH"))
