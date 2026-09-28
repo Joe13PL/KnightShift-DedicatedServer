@@ -147,7 +147,6 @@ struct State {
     bool unknownLogged = false;
     bool serialTried = false;
     // hero dialog
-    bool heroCreated = false;
     bool heroNamed = false;
     // host lobby
     bool levelChosen = false;
@@ -194,7 +193,8 @@ void OnProfile(void* dlg, ULONGLONG now) {
 }
 
 // RPG character selection. The host lobby opens it by itself when the profile has no
-// network hero; a session cannot start without one.
+// network hero (a session cannot start without one); the dialog then already holds a new
+// default hero "<class> <profile>", which gets the configured name.
 void OnHeroDialog(void* dlg, ULONGLONG now) {
     int count = (int)Field(dlg, HERO_DLG_COUNT);
     int sel = (int)Field(dlg, HERO_DLG_SEL);
@@ -202,7 +202,6 @@ void OnHeroDialog(void* dlg, ULONGLONG now) {
         // "Create new character": default class, name "<class> <profile>", selected.
         Log("server: no RPG hero in the profile - creating one");
         Command(dlg, ID_HERO_CREATE);
-        st.heroCreated = true;
         st.heroNamed = false;
         Delay(now, 1000);
         return;
@@ -212,7 +211,9 @@ void OnHeroDialog(void* dlg, ULONGLONG now) {
         Delay(now, 1000);
         return;
     }
-    if (st.heroCreated && !st.heroNamed) {
+    void* nameCtrl = Control(dlg, ID_HERO_NAME);
+    const wchar_t* name = nameCtrl ? ((GetTextFn)VFn(nameCtrl, VT_CTRL_GET_TEXT))(nameCtrl) : nullptr;
+    if (count == 1 && !st.heroNamed && name && wcscmp(name, cfg.heroName) != 0) {
         st.heroNamed = true;
         if (SetText(dlg, ID_HERO_NAME, cfg.heroName)) {
             ((MenuCbFn)(uintptr_t)Field(dlg, DLG_CALLBACK))(dlg, MSG_EDIT_CHANGED, ID_HERO_NAME, 0);
@@ -227,7 +228,7 @@ void OnHeroDialog(void* dlg, ULONGLONG now) {
     }
     Log("server: accepting RPG hero %d of %d", sel + 1, count);
     Command(dlg, ID_HERO_ACCEPT);
-    st.heroCreated = st.heroNamed = false;
+    st.heroNamed = false;
     Delay(now, 3000);
 }
 
