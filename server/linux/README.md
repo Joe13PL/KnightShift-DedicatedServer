@@ -1,79 +1,104 @@
 # Serwer KnightShift na Linuksie (Wine)
 
-Uruchamia serwer dedykowany na VPS/serwerze z Linuksem, bez pulpitu. Gra chodzi pod Wine na
-wirtualnym ekranie (Xvfb), a bieżący log i komendy serwera są w zwykłym terminalu.
+Serwer dedykowany na VPS/serwerze z Linuksem, bez pulpitu. Gra chodzi pod Wine na wirtualnym
+ekranie (Xvfb), a bieżący log i komendy serwera są w zwykłym terminalu (albo w sesji `tmux`).
 
-> **Status: nieprzetestowane na żywym Linuksie.** Skrypty powstały na podstawie analizy i działającego
-> serwera na Windows (ta sama binarka gry, `KnightShift.ex1` uruchamiany bez launchera, konsola przez
-> stdin/stdout). Przetestuj na swoim VPS i zgłoś wynik w Issues.
+> **Stan (2026-09-29): sprawdzone na VPS** — Ubuntu 22.04, 4 vCPU AMD EPYC (KVM), bez GPU,
+> WineHQ staging 11.18. Od czystego prefiksu: `setup.sh` ~2,5 min, start gry do menu ~20–35 s,
+> potem rysowanie wyłączone (`Render=startup`). Doszło do ekranu klucza CD; pełna gra z graczami
+> przez internet jeszcze przed nami.
 
 ## Wymagania
 
-- **Własna, legalna kopia gry.** Skrypty nie zawierają ani nie pobierają plików gry. Zdobądź je
-  na maszynę zgodnie ze swoją licencją, np.:
-  - skopiuj folder gry ze swojego PC (Steam → KnightShift → Zarządzaj → Przeglądaj pliki lokalne), albo
-  - zainstaluj przez `steamcmd` na swoim koncie Steam (`app_update 254060`).
-- Pakiety: `wine` (z obsługą 32-bit), `winetricks`, `xvfb`. Na Debianie/Ubuntu:
+- **Własna, legalna kopia gry** z **własnym kluczem CD**. Skrypty nie zawierają ani nie pobierają
+  plików gry. Najprościej: lekka paczka z [`server/pack`](../pack/) zbudowana z Twojej instalacji
+  (~0,6 GB), przegrana na serwer (WinSCP/`scp`) i rozpakowana.
+- Pakiety (Ubuntu 22.04/24.04, Debian). Wine z repozytorium dystrybucji (6.x) jest za stary —
+  użyj WineHQ:
+  ```bash
+  sudo dpkg --add-architecture i386
+  sudo mkdir -pm755 /etc/apt/keyrings
+  sudo wget -O /etc/apt/keyrings/winehq-archive.key https://dl.winehq.org/wine-builds/winehq.key
+  sudo wget -NP /etc/apt/sources.list.d/ https://dl.winehq.org/wine-builds/ubuntu/dists/$(lsb_release -cs)/winehq-$(lsb_release -cs).sources
+  sudo apt update
+  sudo apt install --install-recommends winehq-staging
+  sudo apt install xvfb tmux cabextract unzip \
+      libegl1:i386 libegl-mesa0:i386 libgl1:i386 libglx-mesa0:i386 libgl1-mesa-dri:i386
+  # winetricks (aktualny):
+  sudo wget -O /usr/local/bin/winetricks https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks
+  sudo chmod +x /usr/local/bin/winetricks
   ```
-  sudo dpkg --add-architecture i386 && sudo apt update
-  sudo apt install wine wine32:i386 winetricks xvfb
-  ```
-- Pliki serwera z tego repo: zbuduj `dinput8.dll` i `steam_api.dll` (patrz główny README, `./build.sh`).
+  Bez 32-bitowego `libEGL` Wine nie uruchomi Direct3D — gra zamknie się zaraz po starcie.
+- Pliki serwera z `build/` tego repo: `dinput8.dll`, `steam_api.dll`, `ksnetfix.ini`,
+  `d3d8enum.exe` (lekka paczka zawiera je już).
 
 ## Katalog serwera
 
-Załóż katalog (np. `~/ks-server`) z plikami gry i serwera:
-
 ```
 KnightShift.exe  KnightShift.ex1  KnightShift.ex2  ijl10.dll   <- z Twojej kopii gry
-WDFiles/ ...                                                   <- dane gry (patrz "Lekki zestaw")
-dinput8.dll  steam_api.dll                                     <- z build/ tego repo
-ksnetfix.ini                                                   <- z build/ (KSNetFix + [Server])
+WDFiles/ ...                                                   <- dane gry (lekki zestaw wystarczy)
+dinput8.dll  steam_api.dll  ksnetfix.ini  d3d8enum.exe         <- z build/ tego repo
 ```
 
-W `ksnetfix.ini`, w sekcji `[Server]`, na Linuksie użyj: `Console=auto` (albo `stdio`),
-`Window=hidden`, `Render=startup`. W `[Steam]` na razie `Enabled=0` (gra po LAN/relay Steam
-przez anonimowy serwer to osobny, planowany krok).
+W `ksnetfix.ini` wpisz swój klucz: `[Server] CdKey=XXXX-XXXX-XXXX-XXXX` (tylko w pliku, nigdy
+w konsoli). Zalecane na Linuksie: `Console=auto`, `Window=hidden`, `Render=startup`. Dla gry
+po TCP/IP (adres IP serwera) w `[Steam]` zostaw `Enabled=0`.
 
 ## Uruchomienie
 
 ```bash
 cd KnightShift-DedicatedServer/server/linux
-./setup.sh ~/ks-server     # raz: prefiks Wine, czcionki, klucze rejestru gry
-./run.sh   ~/ks-server     # start serwera; log i komendy w tym terminalu
+./setup.sh ~/ks-server     # raz: prefiks Wine, DirectPlay, rejestr gry, tryb grafiki
+./run.sh   ~/ks-server     # serwer w tym terminalu (log + komendy), Ctrl+C wyłącza
 ```
 
-W terminalu wpisujesz komendy (`status`, `start`, `end`, `pause`, `resume`, `show`, `hide`, `quit`),
-tak jak w konsoli na Windows. `Ctrl+C` wyłącza serwer (gra opuszcza sesję).
+Albo w tle, z konsolą dostępną w każdej chwili:
 
-Sprawdź `~/ks-server/ksnetfix.log` — pierwsze linie muszą kończyć się `ok`, a przy starcie
-pojawi się `server: level ...` (serwer w lobby). Jeśli brakuje czcionek na ekranie klucza,
-uzupełnij `winetricks corefonts`.
+```bash
+./start.sh ~/ks-server           # start w sesji tmux "knightshift"
+tmux attach -t knightshift       # konsola serwera; wyjście bez zatrzymania: Ctrl+B, potem D
+./stop.sh                        # wysyła "quit" i czeka na zamknięcie
+```
 
-## Jako usługa (auto-start, restart)
+Komendy: `status`, `start`, `end`, `pause`, `resume`, `show`, `hide`, `quit`. Log też w
+`~/ks-server/ksnetfix.log` — przy poprawnym starcie pojawia się `menu ready`, a potem `level ...`
+(serwer w lobby).
 
-`knightshift-server.service` (systemd): edytuj `User` i ścieżki, skopiuj do
-`/etc/systemd/system/`, potem `systemctl enable --now knightshift-server`. Usługa nie ma
-terminala, więc sterujesz nią przez `systemctl`; log: `journalctl -u knightshift-server -f`.
+Gracze łączą się przez **Multiplayer → TCP/IP**, adres = IP serwera. U graczy w `ksnetfix.ini`
+musi być `[Steam] Enabled=0` (inaczej KSNetFix zamienia TCP/IP na Steam). Jeśli VPS ma firewall
+(np. `ufw`), przepuść ruch gry — DirectPlay zwykle używa UDP 6073 (wyszukiwanie sesji) i portów
+z zakresu 2300–2400 (nie sprawdzone dla tej gry; najprościej zacząć bez firewalla).
 
-## Lekki zestaw danych
+## Jako usługa (systemd)
 
-Serwer nie potrzebuje filmów, muzyki ani mowy. Możesz pominąć z `WDFiles/` pliki:
-`Video*.wd`, `Music.wd`, `Speeches.wd` (razem ~0,5 GB). Które dokładnie da się pominąć, trzeba
-potwierdzić na czystym prefiksie — gra przy braku pliku zwykle pisze o tym w logu. Zawsze zostaw
-`Scripts.wd`, `Levels*.wd`, `Parameters.wd`, `Config.wd`, `Terrains*.wd`, `Meshes.wd`,
-`Textures.wd`, `Interface*.wd`, `Language.wd`, `Shaders.wd`, `SPS.wd1`, `SPG.wd1`, `Players.wd`.
+`knightshift-server.service`: edytuj `User` i ścieżki, skopiuj do `/etc/systemd/system/`,
+potem `systemctl enable --now knightshift-server`. Usługa nie ma terminala — log:
+`journalctl -u knightshift-server -f`. Jeśli chcesz mieć komendy, użyj `start.sh` (tmux).
+
+## Co robi `setup.sh` (i dlaczego)
+
+Każdy punkt to przeszkoda znaleziona przy uruchamianiu na VPS:
+
+1. **Prefiks Wine 32-bit** bez instalatorów Mono/Gecko (ich okna czekałyby w nieskończoność na
+   niewidocznym ekranie).
+2. **DirectPlay** (`winetricks directplay`) — gra go wymaga, tak jak na Windows 11 trzeba włączyć
+   funkcję DirectPlay. winetricks pobiera `directx_feb2010_redist.exe`; web.archive.org bywa
+   przeciążone (błąd 429) — wtedy wgraj ten plik do `~/.cache/winetricks/directx9/` i powtórz.
+3. **Rejestr gry** (`wine reg add`, nie import `.reg` — import gubił backslashe w ścieżce, a gra
+   pokazywała „Game isn't properly installed”): ścieżka danych, język, `CheckMMX=0`, bez intro,
+   najniższa jakość grafiki, sterownik dźwięku wyłączony.
+4. **Tryb grafiki.** Bez zapisanego trybu `KnightShift.ex1` uruchamia konfigurator `Config.exe`
+   (okno do klikania) i sam się zamyka. Na Windows robi to przy każdym starcie, dlatego rejestr
+   bywa pusty. `d3d8enum.exe` odczytuje urządzenie D3D8, które widzi Wine (na VPS bez GPU:
+   „NVIDIA GeForce GTX 470” — atrapa Wine na programowym OpenGL), a `run.sh` podaje grze
+   ten sam parametr, co `Config.exe`: `-renderer ^<urządzenie>^,1024,768,32,0,0`.
+
+Dodatkowo serwer (`dinput8.dll`) omija test MMX gry: na niektórych wirtualnych CPU jej
+wykrywanie przez CPUID zawodzi i gra kończy się komunikatem „MMX Processor Required”.
 
 ## Grafika bez GPU
 
-`Render=startup` sprawia, że gra rysuje tylko kilka klatek startowych, więc wystarcza programowy
-OpenGL (Mesa llvmpipe) na Xvfb — GPU nie jest wymagane. Jeśli start nie dochodzi do menu
-(w logu brak `server: level`), sprawdź, czy Wine ma działający OpenGL: `wine glxgears` albo
-`LIBGL_ALWAYS_SOFTWARE=1` przed `./run.sh`.
-
-## Jak to działa
-
-`run.sh` uruchamia `KnightShift.ex1` bezpośrednio (pomija launcher `KnightShift.exe`), dzięki czemu
-stdin/stdout terminala trafiają do serwera. Klucze rejestru z `setup.sh` zastępują skrypt
-instalacyjny Steama, więc gra znajduje swoje dane bez klienta Steam. Reszta (profil i bohater
-„Serwer”, lobby, start, obserwator, koniec gry) działa tak samo jak na Windows.
+`Render=startup` sprawia, że gra rysuje tylko do wejścia do menu (~20–35 s na programowym
+OpenGL, Mesa llvmpipe), potem nic — GPU nie jest potrzebne. Jeśli start nie dochodzi do menu,
+sprawdź: `wine d3d8enum.exe` w katalogu gry (musi pokazać urządzenie) i czy są pakiety
+`libegl1:i386` itd.

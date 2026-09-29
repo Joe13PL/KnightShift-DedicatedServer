@@ -948,6 +948,17 @@ bool Verify(const Addrs& a) {
 
 } // namespace
 
+// Under Wine / some virtualized CPUs the game's MMX probe (CPUID via an EFLAGS test) comes out
+// empty and the game exits with "MMX Processor Required", even though the CPU has MMX. Force the
+// MMX feature bit the detector stores (0x00796DF1: "and edx,0x800000" -> "mov edx,0x800000; nop").
+// Harmless on real hardware, where MMX is present anyway.
+bool InstallMmxFix() {
+    static const uint8_t expect[] = {0x81, 0xE2, 0x00, 0x00, 0x80, 0x00};
+    static const uint8_t patch[]  = {0xBA, 0x00, 0x00, 0x80, 0x00, 0x90};
+    if (!Match(0x00796DF1, expect, sizeof(expect))) return false;
+    return WriteCode(0x00796DF1, patch, sizeof(patch));
+}
+
 bool Server_LoadConfig(const char* ini) {
     wchar_t iniW[MAX_PATH];
     MultiByteToWideChar(CP_ACP, 0, ini, -1, iniW, MAX_PATH);
@@ -1029,6 +1040,7 @@ bool Server_Install(bool ex1, const ServerGameAddrs& g) {
         "(Scroll Lock pauses the automation)",
         name, profile, hero, level, cfg.minPlayers, cfg.startDelay, cfg.dynamicConnect, cfg.observer, cfg.fps,
         cfg.autoRestart, cfg.uniqueIdentity);
+    Log("server: MMX check bypass (Wine/virtual CPU): %s", InstallMmxFix() ? "ok" : "not needed / mismatch");
     static const char* kWindowNames[] = {"normal", "minimized", "hidden"};
     Say("background mode (window %s, never takes the focus, sound %s): %s", kWindowNames[cfg.window],
         cfg.mute ? "off" : "on", InstallBackground() ? "ok" : "FAILED");

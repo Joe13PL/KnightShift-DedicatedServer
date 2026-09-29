@@ -82,8 +82,10 @@ python tools/check_server_sigs.py "C:/.../steamapps/common/KnightShift/KnightShi
 - [x] Konsola serwera, automatyczny koniec gry po wyjściu ostatniego gracza (test 2026-09-28).
 - [x] Ograniczenie grafiki (`Render=startup`) i konsola przez terminal (`Console=stdio`); w lobby 0% GPU.
 - [ ] Test przez Steam, dołączanie w trakcie gry, klucz CD na czystej maszynie.
-- [x] **Linux VPS przez Wine:** skrypty w [`server/linux/`](server/linux/) (Xvfb, prefiks Wine, rejestr
-      gry, systemd) i log/komendy w terminalu — **jeszcze nieprzetestowane na żywym Linuksie**.
+- [x] **Linux VPS przez Wine:** [`server/linux/`](server/linux/) — `setup.sh` (prefiks Wine, DirectPlay,
+      rejestr, tryb grafiki), `run.sh` / `start.sh` (tmux) / `stop.sh`, log i komendy w terminalu.
+      Sprawdzone na VPS z Ubuntu 22.04 bez GPU (WineHQ 11): gra dochodzi do menu i ekranu klucza CD;
+      gra z graczami przez internet jeszcze przed nami.
 - [~] **Anonimowy serwer gry Steam** (`[Steam] GameServer=1`): logowanie anonimowe (`SteamGameServer`),
       ruch przez `SteamGameServerNetworkingMessages` (SDR). Bez konta i bez klienta Steam; gracze
       dołączają po SteamID64 serwera. Zbudowane, transport instaluje się — **pełny test na żywo przed nami**;

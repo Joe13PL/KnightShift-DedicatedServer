@@ -195,6 +195,29 @@ instancja gry startuje poprawnie tylko, gdy inna kopia gry nie działała już w
 (kolejność: najpierw serwer, potem klient). Na VPS bez klienta Steam potrzebny będzie
 `steamclient.dll` z SteamCMD (Steamworks SDK Redist, app 1007).
 
+## Linux VPS (Wine) — wyniki uruchomienia (2026-09-29)
+
+Na VPS (Ubuntu 22.04, KVM, AMD EPYC, bez GPU) gra pod Wine kończyła się po cichu przed menu.
+Przyczyny, po kolei (szczegóły dla operatora: `server/linux/README.md`):
+
+1. `datapath` z importu `.reg` bez backslashy → „Game isn't properly installed” — teraz `wine reg add`.
+2. Wine 6.0 z dystrybucji + brak 32-bit `libEGL.so.1` → Direct3D nie startuje — WineHQ + Mesa EGL/GL i386.
+3. `WinMain` (`0x404C20`): test MMX — `f5c9dc = CPUID(1).EDX & 0x800000` (`0x796DF1`); przy 0
+   „MMX Processor Required” i wyjście. Serwer wymusza bit (`and edx,0x800000` → `mov edx,0x800000`);
+   gra ma też przełącznik `BaseGame\Processor\CheckMMX=0`.
+4. **Tryb grafiki:** `FUN_0075ef10`/`FUN_0075e490` biorą urządzenie i tryb z
+   `BaseGame\Graphics\Default` (`Renderer`, `Width`, `Height`, `BitDepth`, `RefreshRate`,
+   `RendererType`) albo z parametru `-renderer ^<opis adaptera D3D8>^,W,H,BPP,Hz,x`. Bez nich
+   `WinMain` uruchamia `Config.exe` (string 0x2080) i zwraca 0 — na Windows to normalna ścieżka
+   przy każdym starcie (Config.exe wraca z `-renderer`), headless nie ma kto kliknąć. Lista
+   adapterów powstaje przez `Direct3DCreate8` (`FUN_00710cb0`) tylko gdy jest `-renderer` /
+   `RendererType`. `d3d8enum.exe --renderer` wypisuje parametr; pod Wine bez GPU adapter to
+   „NVIDIA GeForce GTX 470” (atrapa Wine), tryb 1024×768×32.
+5. Pierwszy `wineboot` czeka na niewidoczne okna instalatorów Mono/Gecko → `mscoree=;mshtml=`.
+6. DirectPlay natywny (`winetricks directplay`) — wymagany jak funkcja DirectPlay na Windows 11.
+
+Wynik: `Window=hidden`, `Render=startup` — menu po ~20–35 s na llvmpipe, potem bez rysowania.
+
 ## Linux VPS (Wine)
 
 Wielu operatorów będzie chciało Linuksa. Ustalenia:

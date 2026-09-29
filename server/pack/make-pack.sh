@@ -56,9 +56,16 @@ cp "$BUILD/dinput8.dll" "$BUILD/steam_api.dll" "$DEST/"
 
 echo ">> adding start scripts and instructions"
 cp "$HERE/files/start.bat" "$HERE/files/stop.bat" "$HERE/files/INSTRUKCJA.txt" "$DEST/"
+# Linux / Wine: graphics-mode helper next to the game, scripts in linux/ (LF line endings)
+[[ -f "$BUILD/d3d8enum.exe" ]] && cp "$BUILD/d3d8enum.exe" "$DEST/"
+mkdir -p "$DEST/linux"
+for f in setup.sh run.sh start.sh stop.sh README.md knightshift-server.service; do
+    tr -d '\r' < "$HERE/../linux/$f" > "$DEST/linux/$f"
+done
+chmod +x "$DEST"/linux/*.sh
 
 echo ">> zipping"
 ( cd "$OUT" && rm -f KnightShift-Server.zip && /c/Windows/System32/tar.exe -a -c -f KnightShift-Server.zip KnightShift-Server )
 SIZE="$(du -sh "$DEST" | cut -f1)"
 echo ">> done: $DEST ($SIZE) and $OUT/KnightShift-Server.zip"
-echo "   For your own use only - it contains game files. Enter your own CD key in start.bat / ksnetfix.ini."
+echo "   For your own use only - it contains game files. Enter your own CD key in ksnetfix.ini ([Server] CdKey=)."
